@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { fetchUrl, fetchJson, FetchResult, FetchOptions } from '../../../utils/fetch';
+import { fetchUrl, fetchJson, FetchResult, FetchOptions } from '../../lib/fetch';
 
 interface FetchApiResponse extends FetchResult {
   json?: unknown;
@@ -35,8 +35,6 @@ export default async function handler(
   // Apply default options with user overrides
   const fetchOptions: FetchOptions = {
     timeout: options?.timeout ?? 30000,
-    maxSize: options?.maxSize ?? 10 * 1024 * 1024,
-    followRedirects: options?.followRedirects ?? true,
     headers: options?.headers ?? {},
   };
 

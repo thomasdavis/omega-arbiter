@@ -1,0 +1,184 @@
+#!/bin/bash
+# Health Check Script for Omega Arbiter
+# Runs every 5 minutes via cron to detect and auto-fix issues
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+LOG_FILE="$PROJECT_DIR/logs/health-check.log"
+LOCK_FILE="/tmp/omega-health-check.lock"
+
+# Ensure logs directory exists
+mkdir -p "$PROJECT_DIR/logs"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+# Prevent concurrent runs
+if [ -f "$LOCK_FILE" ]; then
+    # Check if the lock is stale (older than 10 minutes)
+    if [ "$(find "$LOCK_FILE" -mmin +10 2>/dev/null)" ]; then
+        log "Removing stale lock file"
+        rm -f "$LOCK_FILE"
+    else
+        log "Another health check is running, exiting"
+        exit 0
+    fi
+fi
+
+trap "rm -f $LOCK_FILE" EXIT
+touch "$LOCK_FILE"
+
+# Check if a service is running and healthy
+check_service() {
+    local service_name=$1
+    local status
+
+    # Get PM2 status
+    status=$(pm2 jlist 2>/dev/null | jq -r ".[] | select(.name == \"$service_name\") | .pm2_env.status" 2>/dev/null || echo "unknown")
+
+    if [ "$status" != "online" ]; then
+        echo "not_running"
+        return
+    fi
+
+    # Check restart count in last 5 minutes (high restart count = crash loop)
+    local restart_count
+    restart_count=$(pm2 jlist 2>/dev/null | jq -r ".[] | select(.name == \"$service_name\") | .pm2_env.restart_time" 2>/dev/null || echo "0")
+
+    # Get uptime in seconds
+    local uptime_ms
+    uptime_ms=$(pm2 jlist 2>/dev/null | jq -r ".[] | select(.name == \"$service_name\") | .pm2_env.pm_uptime" 2>/dev/null || echo "0")
+    local now_ms=$(($(date +%s) * 1000))
+    local uptime_sec=$(( (now_ms - uptime_ms) / 1000 ))
+
+    # If uptime < 60 seconds and restart count > 5, likely crash looping
+    if [ "$uptime_sec" -lt 60 ] && [ "$restart_count" -gt 5 ]; then
+        echo "crash_loop"
+        return
+    fi
+
+    # Check for recent errors in logs (last 2 minutes)
+    local error_count
+    error_count=$(pm2 logs "$service_name" --nostream --lines 50 2>/dev/null | grep -i "fatal\|error\|exception" | wc -l || echo "0")
+
+    if [ "$error_count" -gt 3 ]; then
+        echo "errors"
+        return
+    fi
+
+    echo "healthy"
+}
+
+# Get recent error messages for context
+get_error_context() {
+    local service_name=$1
+    pm2 logs "$service_name" --nostream --lines 30 2>/dev/null | grep -i "error\|fatal\|exception\|failed" | tail -15 || echo "No specific errors found"
+}
+
+# Main health check
+main() {
+    log "Starting health check..."
+
+    local arbiter_status
+    local dashboard_status
+    local needs_fix=false
+    local error_context=""
+
+    arbiter_status=$(check_service "omega-arbiter")
+    dashboard_status=$(check_service "omega-dashboard")
+
+    log "omega-arbiter: $arbiter_status"
+    log "omega-dashboard: $dashboard_status"
+
+    # Determine if we need Claude to fix something
+    # Only auto-fix for crash loops or service down - not just log errors
+    if [ "$arbiter_status" = "crash_loop" ] || [ "$arbiter_status" = "not_running" ]; then
+        needs_fix=true
+        error_context="$error_context
+
+=== omega-arbiter errors ===
+Status: $arbiter_status
+$(get_error_context "omega-arbiter")"
+    elif [ "$arbiter_status" = "errors" ]; then
+        log "omega-arbiter has errors but is running - monitoring only"
+    fi
+
+    if [ "$dashboard_status" = "crash_loop" ] || [ "$dashboard_status" = "not_running" ]; then
+        needs_fix=true
+        error_context="$error_context
+
+=== omega-dashboard errors ===
+Status: $dashboard_status
+$(get_error_context "omega-dashboard")"
+    elif [ "$dashboard_status" = "errors" ]; then
+        log "omega-dashboard has errors but is running - monitoring only"
+    fi
+
+    if [ "$needs_fix" = true ]; then
+        log "Issues detected, spawning Claude to fix..."
+
+        # Create a prompt for Claude
+        local prompt="# Emergency Auto-Fix Task
+
+The health check has detected issues with the Omega Arbiter services.
+
+## Current Status
+- omega-arbiter: $arbiter_status
+- omega-dashboard: $dashboard_status
+
+## Error Context
+$error_context
+
+## Instructions
+1. Analyze the errors above
+2. Identify the root cause
+3. Fix the issue in the codebase
+4. Test that it compiles: npm run type-check
+5. Commit your fix with a clear message
+6. The fix will be auto-deployed on commit
+
+Be concise and fix only what's broken. Do not add unnecessary features or refactoring."
+
+        cd "$PROJECT_DIR"
+
+        # Run Claude to fix the issues
+        log "Running Claude Code..."
+        if claude -p "$prompt" --output-format stream-json --permission-mode acceptEdits 2>&1 | tee -a "$LOG_FILE"; then
+            log "Claude completed successfully"
+
+            # Check if there are changes to commit
+            if [ -n "$(git status --porcelain)" ]; then
+                log "Changes detected, committing..."
+                git add -A
+                git commit -m "Auto-fix: Health check detected and fixed service issues
+
+$(echo "$error_context" | head -10)
+
+Generated by health-check.sh"
+
+                git push origin main
+                log "Changes pushed to origin"
+
+                # Restart services
+                pm2 restart omega-arbiter omega-dashboard
+                log "Services restarted"
+            else
+                log "No code changes needed"
+                # Try just restarting
+                pm2 restart omega-arbiter omega-dashboard
+                log "Services restarted"
+            fi
+        else
+            log "Claude failed to fix the issue"
+        fi
+    else
+        log "All services healthy"
+    fi
+
+    log "Health check complete"
+}
+
+main "$@"

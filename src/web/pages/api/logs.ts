@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getLogStore } from '../../../logs/store';
+import { getLogStore } from '../../lib/logStore';
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const { limit = '100', filter = '' } = req.query;
