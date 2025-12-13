@@ -1,7 +1,9 @@
 /**
  * Log Store for Omega Arbiter
- * In-memory log storage with persistence support
+ * In-memory log storage with PostgreSQL persistence support
  */
+
+import { insertLog, isDbAvailable, queryLogs, type DbLogEntry } from '../db/index.js';
 
 export interface LogEntry {
   timestamp: string;
@@ -11,12 +13,33 @@ export interface LogEntry {
   metadata?: Record<string, unknown>;
 }
 
+export interface LogContext {
+  sessionId?: string;
+  channelId?: string;
+  userId?: string;
+}
+
 export class LogStore {
   private logs: LogEntry[] = [];
   private maxLogs: number;
+  private currentContext: LogContext = {};
 
   constructor(maxLogs = 10000) {
     this.maxLogs = maxLogs;
+  }
+
+  /**
+   * Set context for subsequent log entries (session, channel, user)
+   */
+  setContext(context: LogContext): void {
+    this.currentContext = { ...this.currentContext, ...context };
+  }
+
+  /**
+   * Clear the current logging context
+   */
+  clearContext(): void {
+    this.currentContext = {};
   }
 
   private addLog(level: LogEntry['level'], source: string, message: string, metadata?: Record<string, unknown>): void {
@@ -33,6 +56,21 @@ export class LogStore {
     // Trim old logs if we exceed the limit
     if (this.logs.length > this.maxLogs) {
       this.logs = this.logs.slice(-this.maxLogs);
+    }
+
+    // Also persist to PostgreSQL if available (non-blocking)
+    if (isDbAvailable()) {
+      insertLog({
+        level,
+        source,
+        message,
+        metadata,
+        sessionId: this.currentContext.sessionId,
+        channelId: this.currentContext.channelId,
+        userId: this.currentContext.userId,
+      }).catch(() => {
+        // Silently ignore DB errors - already logged in insertLog
+      });
     }
   }
 
@@ -77,6 +115,45 @@ export class LogStore {
       .filter(log => log.source.toLowerCase().includes(source.toLowerCase()))
       .slice(-limit)
       .reverse();
+  }
+
+  /**
+   * Query logs from PostgreSQL database (if available)
+   * Falls back to in-memory logs if DB is not available
+   */
+  async getLogsFromDb(params: {
+    limit?: number;
+    level?: LogEntry['level'];
+    source?: string;
+    sessionId?: string;
+  } = {}): Promise<LogEntry[]> {
+    if (!isDbAvailable()) {
+      // Fall back to in-memory
+      let logs = this.getLogs(params.limit);
+      if (params.level) {
+        logs = logs.filter(l => l.level === params.level);
+      }
+      if (params.source) {
+        logs = logs.filter(l => l.source.toLowerCase().includes(params.source!.toLowerCase()));
+      }
+      return logs;
+    }
+
+    const dbLogs = await queryLogs({
+      limit: params.limit,
+      level: params.level,
+      source: params.source,
+      sessionId: params.sessionId,
+    });
+
+    // Convert DB format to LogEntry format
+    return dbLogs.map((dbLog: DbLogEntry): LogEntry => ({
+      timestamp: dbLog.timestamp.toISOString(),
+      level: dbLog.log_level as LogEntry['level'],
+      source: dbLog.source,
+      message: dbLog.message,
+      metadata: dbLog.metadata || undefined,
+    }));
   }
 
   clear(): void {
