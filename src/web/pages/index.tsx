@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 
 interface LogEntry {
   timestamp: string;
@@ -48,7 +49,19 @@ export default function Dashboard() {
       minHeight: '100vh',
       padding: '20px'
     }}>
-      <h1 style={{ color: '#a855f7' }}>🤖 Omega Arbiter Dashboard</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginBottom: '10px' }}>
+        <h1 style={{ color: '#a855f7', margin: 0 }}>Omega Arbiter Dashboard</h1>
+        <Link href="/browse" style={{
+          color: '#4da6ff',
+          textDecoration: 'none',
+          padding: '6px 12px',
+          backgroundColor: '#16213e',
+          borderRadius: '4px',
+          border: '1px solid #333'
+        }}>
+          Browse Files
+        </Link>
+      </div>
 
       <div style={{ marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'center' }}>
         <input
