@@ -59,8 +59,15 @@ export class DiscordTransport extends BaseTransport {
 
         const chatMessage = this.convertMessage(message);
 
+        // Set logging context for this message
+        const logStore = getLogStore();
+        logStore.setContext({
+          channelId: message.channel.id,
+          userId: message.author.id,
+        });
+
         // Log incoming message
-        getLogStore().message('Discord', `[${message.author.username}] ${message.content.slice(0, 500)}`, {
+        logStore.message('Discord', `[${message.author.username}] ${message.content.slice(0, 500)}`, {
           authorId: message.author.id,
           authorName: message.author.username,
           channelName: this.getChannelName(message),

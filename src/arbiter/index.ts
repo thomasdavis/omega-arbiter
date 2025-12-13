@@ -369,6 +369,13 @@ export class Arbiter extends EventEmitter {
       this.coordinator.registerSession(session);
       sessionRegistered = true;
 
+      // Set logging context for this session
+      getLogStore().setContext({
+        sessionId: session.id,
+        channelId: primaryMessage.channelId,
+        userId: primaryMessage.authorId,
+      });
+
       // Note: status channel should be configured via STATUS_CHANNEL_NAME or STATUS_CHANNEL_ID env vars
       // This auto-setting is removed to prevent sessions in other channels from hijacking notifications
 
@@ -379,6 +386,11 @@ export class Arbiter extends EventEmitter {
 
       this.emit('session:created', session);
 
+      getLogStore().info('Arbiter', `Created self-edit session ${session.id}`, {
+        branchName: session.branchName,
+        worktreePath: session.worktreePath,
+        taskDescription,
+      });
       console.log(`[Arbiter] Created self-edit session ${session.id}`);
 
       // Create output stream for Discord

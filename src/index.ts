@@ -9,6 +9,7 @@ import { dirname, join } from 'path';
 import { Arbiter } from './arbiter/index.js';
 import { DiscordTransport } from './transports/discord.js';
 import { ArbiterConfig } from './types.js';
+import { initializeDb, closeDb } from './db/index.js';
 
 // Get directory of this file and load .env from project root
 const __filename = fileURLToPath(import.meta.url);
@@ -33,6 +34,14 @@ async function main(): Promise<void> {
   console.log('Self-editing agent with git worktree management\n');
 
   validateEnv();
+
+  // Initialize PostgreSQL database (optional - continues without it if not configured)
+  const dbInitialized = await initializeDb();
+  if (dbInitialized) {
+    console.log('[Main] PostgreSQL logging enabled');
+  } else {
+    console.log('[Main] PostgreSQL not configured, using in-memory logging only');
+  }
 
   // Build configuration
   const config: ArbiterConfig = {
@@ -120,6 +129,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     console.log(`\n[Main] Received ${signal}, shutting down...`);
     await arbiter.stop();
+    await closeDb();
     process.exit(0);
   };
 
