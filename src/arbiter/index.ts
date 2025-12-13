@@ -17,7 +17,7 @@ import {
   WorkSession,
   MessageContext,
 } from '../types.js';
-import { WorktreeManager } from '../git/worktree.js';
+import { WorktreeManager, MergeResult } from '../git/worktree.js';
 import { MessageQueue, MessageAggregator, QueuedMessage } from '../queue/messageQueue.js';
 import { makeDecision, detectErrorPatterns } from './decision.js';
 import { generateResponse, getQuickAcknowledgment } from './respond.js';
@@ -353,7 +353,27 @@ export class Arbiter extends EventEmitter {
           outputStream.append('\n\n🔀 Merging to main...');
           await outputStream.flush();
 
-          const mergeResult = await this.worktreeManager.mergeToMain(session.id);
+          let mergeResult = await this.worktreeManager.mergeToMain(session.id);
+
+          // If merge failed due to conflicts, spawn Claude to fix them
+          if (!mergeResult.success && mergeResult.conflictType) {
+            outputStream.append('\n\n⚠️ Merge conflict detected! Spawning Claude to resolve...');
+            await outputStream.flush();
+
+            const conflictResolved = await this.resolveConflictsWithClaude(
+              session,
+              mergeResult,
+              outputStream,
+              discordTransport
+            );
+
+            if (conflictResolved) {
+              // Retry the merge
+              outputStream.append('\n\n🔀 Retrying merge...');
+              await outputStream.flush();
+              mergeResult = await this.worktreeManager.mergeToMain(session.id);
+            }
+          }
 
           if (mergeResult.success) {
             // Send success summary
@@ -361,13 +381,13 @@ export class Arbiter extends EventEmitter {
               `**Changes merged to main!**\n\n` +
               `Commit: \`${commitHash.slice(0, 8)}\`\n` +
               `Branch: \`${session.branchName}\`\n\n` +
-              `**Summary:**\n${result.summary.slice(0, 1500)}`,
+              `**Summary:**\n${String(result.summary || 'No output').slice(0, 1500)}`,
               true
             );
 
             this.emit('session:completed', session);
           } else {
-            // Merge failed
+            // Merge failed even after conflict resolution attempt
             await outputStream.finalize(
               `**Changes committed but merge failed**\n\n` +
               `Error: ${mergeResult.error}\n\n` +
@@ -425,6 +445,143 @@ export class Arbiter extends EventEmitter {
           // Ignore cleanup errors
         }
       }
+    }
+  }
+
+  /**
+   * Resolve merge conflicts using Claude
+   * Spawns Claude in the main repo to fix local changes, untracked files, or merge conflicts
+   */
+  private async resolveConflictsWithClaude(
+    session: WorkSession,
+    mergeResult: MergeResult,
+    outputStream: DiscordOutputStream,
+    transport: DiscordTransport
+  ): Promise<boolean> {
+    const repoPath = this.worktreeManager.getRepoPath();
+    const defaultBranch = this.worktreeManager.getDefaultBranch();
+
+    console.log(`[Arbiter] Resolving ${mergeResult.conflictType} conflict with Claude...`);
+
+    // Build a prompt specifically for conflict resolution
+    let conflictPrompt = `You are resolving a git merge conflict in the omega-arbiter repository.
+
+## Situation
+We're trying to merge branch \`${session.branchName}\` into \`${defaultBranch}\` but encountered an issue.
+
+## Conflict Type: ${mergeResult.conflictType}
+
+## Error Details:
+${mergeResult.conflictDetails || mergeResult.error}
+
+## Your Task
+`;
+
+    switch (mergeResult.conflictType) {
+      case 'local_changes':
+        conflictPrompt += `
+There are uncommitted local changes that would be overwritten by the merge.
+
+You need to:
+1. First, run \`git status\` to see what files have local changes
+2. Review the changes with \`git diff\`
+3. Decide the best approach:
+   - If the local changes should be kept: commit them first with an appropriate message
+   - If the local changes can be discarded: run \`git checkout -- <file>\` to discard them
+   - If changes should be stashed: run \`git stash\` to temporarily save them
+4. After handling local changes, the merge will be retried automatically
+
+Be careful to preserve any important work. If unsure, commit the changes rather than discarding them.
+`;
+        break;
+
+      case 'untracked_files':
+        conflictPrompt += `
+There are untracked files that would be overwritten by the merge.
+
+You need to:
+1. Run \`git status\` to see the untracked files
+2. Review if these files are important
+3. Either:
+   - Add and commit them: \`git add <file> && git commit -m "Add <file>"\`
+   - Move them temporarily: \`mv <file> <file>.backup\`
+   - Delete them if not needed: \`rm <file>\`
+4. After handling untracked files, the merge will be retried automatically
+
+Be careful - untracked files may contain important work that was created but not committed.
+`;
+        break;
+
+      case 'merge_conflict':
+        conflictPrompt += `
+There's an actual merge conflict (both branches modified the same lines).
+
+You need to:
+1. Run \`git status\` to see conflicting files
+2. The merge was already aborted, so you need to restart it
+3. Run: \`git merge ${session.branchName}\`
+4. For each conflicting file:
+   - Read the file to see the conflict markers (<<<<<<< ======= >>>>>>>)
+   - Decide how to resolve (keep ours, theirs, or combine)
+   - Edit the file to resolve conflicts
+   - Run \`git add <file>\` to mark as resolved
+5. Complete the merge with \`git commit\`
+6. After resolving, the process will continue automatically
+`;
+        break;
+
+      default:
+        conflictPrompt += `
+An unexpected merge error occurred.
+
+Please:
+1. Run \`git status\` to understand the current state
+2. Try to fix whatever is preventing the merge
+3. The merge will be retried automatically after you're done
+`;
+    }
+
+    conflictPrompt += `
+## Important Notes
+- You're working in the MAIN repo at: ${repoPath}
+- The branch to merge is: ${session.branchName}
+- The target branch is: ${defaultBranch}
+- After you resolve the issue, just finish. The merge will be retried automatically.
+- If you successfully complete the merge yourself, that's also fine.
+`;
+
+    try {
+      outputStream.append(`\n\n🔧 Running Claude to fix ${mergeResult.conflictType} issue...\n`);
+      await outputStream.flush();
+
+      const runner = new ClaudeRunner();
+      const result = await runner.run({
+        workdir: repoPath,
+        prompt: conflictPrompt,
+        onOutput: async (event) => {
+          await outputStream.handleEvent(event);
+        },
+        onError: (error) => {
+          console.error('[Arbiter] Claude conflict resolution error:', error);
+        },
+      });
+
+      console.log(`[Arbiter] Conflict resolution Claude exited with code ${result.exitCode}`);
+
+      if (result.success) {
+        outputStream.append('\n\n✅ Conflict resolution completed!');
+        await outputStream.flush();
+        return true;
+      } else {
+        outputStream.append(`\n\n❌ Conflict resolution failed: ${String(result.summary || 'Unknown error').slice(0, 500)}`);
+        await outputStream.flush();
+        return false;
+      }
+    } catch (error) {
+      console.error('[Arbiter] Error during conflict resolution:', error);
+      outputStream.append(`\n\n❌ Error resolving conflicts: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      await outputStream.flush();
+      return false;
     }
   }
 

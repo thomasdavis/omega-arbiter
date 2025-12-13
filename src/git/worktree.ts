@@ -10,6 +10,16 @@ import { mkdir, rm, access, readdir } from 'fs/promises';
 import { join } from 'path';
 import { WorkSession, WorkSessionStatus, ChatMessage } from '../types.js';
 
+/**
+ * Result of a merge operation
+ */
+export interface MergeResult {
+  success: boolean;
+  error?: string;
+  conflictType?: 'local_changes' | 'untracked_files' | 'merge_conflict' | 'other';
+  conflictDetails?: string;
+}
+
 const execFileAsync = promisify(execFile);
 
 /**
@@ -75,14 +85,27 @@ export class WorktreeManager {
     this.sessions.set(sessionId, session);
 
     try {
-      // Fetch latest from remote
-      await this.gitCommand('fetch origin', this.config.repoPath);
+      // Try to fetch latest from remote (optional - may not have remote configured)
+      try {
+        await this.gitCommand('fetch origin', this.config.repoPath);
+        console.log('[Worktree] Fetched from origin');
+      } catch {
+        console.log('[Worktree] No remote to fetch from, using local branch');
+      }
 
-      // Create new branch from default branch
-      await this.gitCommand(
-        `branch ${branchName} origin/${this.config.defaultBranch}`,
-        this.config.repoPath
-      );
+      // Create new branch from default branch (try origin first, fall back to local)
+      try {
+        await this.gitCommand(
+          `branch ${branchName} origin/${this.config.defaultBranch}`,
+          this.config.repoPath
+        );
+      } catch {
+        // No origin, branch from local default branch
+        await this.gitCommand(
+          `branch ${branchName} ${this.config.defaultBranch}`,
+          this.config.repoPath
+        );
+      }
 
       // Create worktree
       await this.gitCommand(
@@ -258,7 +281,7 @@ export class WorktreeManager {
    * Merge session branch directly into main branch
    * This runs in the MAIN repo, not the worktree
    */
-  async mergeToMain(sessionId: string): Promise<{ success: boolean; error?: string }> {
+  async mergeToMain(sessionId: string): Promise<MergeResult> {
     const session = this.sessions.get(sessionId);
     if (!session) {
       return { success: false, error: `Session ${sessionId} not found` };
@@ -270,14 +293,22 @@ export class WorktreeManager {
     console.log(`[Worktree] Merging ${branchName} into ${defaultBranch}...`);
 
     try {
-      // Fetch latest from origin
-      await this.gitCommand('fetch origin', repoPath);
+      // Fetch latest from origin (ignore errors if no remote)
+      try {
+        await this.gitCommand('fetch origin', repoPath);
+      } catch {
+        console.log('[Worktree] No remote to fetch from, continuing...');
+      }
 
       // Checkout the default branch in main repo
       await this.gitCommand(`checkout ${defaultBranch}`, repoPath);
 
-      // Pull latest changes
-      await this.gitCommand(`pull origin ${defaultBranch}`, repoPath);
+      // Pull latest changes (ignore errors if no remote)
+      try {
+        await this.gitCommand(`pull origin ${defaultBranch}`, repoPath);
+      } catch {
+        console.log('[Worktree] No remote to pull from, continuing...');
+      }
 
       // Merge the session branch with a descriptive message
       const mergeMessage = `Merge ${branchName}: Self-edit by ${triggeredBy.authorName}`;
@@ -287,6 +318,8 @@ export class WorktreeManager {
           repoPath
         );
       } catch (mergeError) {
+        const errorStr = mergeError instanceof Error ? mergeError.message : String(mergeError);
+
         // Check if it's a merge conflict
         const status = await this.gitCommand('status', repoPath);
         if (status.includes('Unmerged') || status.includes('both modified')) {
@@ -294,18 +327,41 @@ export class WorktreeManager {
           await this.gitCommand('merge --abort', repoPath);
           return {
             success: false,
-            error: 'Merge conflict detected. Branch kept for manual resolution.',
+            error: 'Merge conflict detected.',
+            conflictType: 'merge_conflict',
+            conflictDetails: status,
           };
         }
+
+        // Check for local changes blocking merge
+        if (errorStr.includes('local changes') || errorStr.includes('would be overwritten')) {
+          return {
+            success: false,
+            error: 'Local changes would be overwritten by merge.',
+            conflictType: 'local_changes',
+            conflictDetails: errorStr,
+          };
+        }
+
+        // Check for untracked files
+        if (errorStr.includes('untracked working tree files')) {
+          return {
+            success: false,
+            error: 'Untracked files would be overwritten by merge.',
+            conflictType: 'untracked_files',
+            conflictDetails: errorStr,
+          };
+        }
+
         throw mergeError;
       }
 
-      // Push to origin
-      await this.gitCommand(`push origin ${defaultBranch}`, repoPath);
-
-      // Clean up the feature branch (optional - keeping it commented for now)
-      // await this.gitCommand(`branch -d ${branchName}`, repoPath);
-      // await this.gitCommand(`push origin --delete ${branchName}`, repoPath);
+      // Push to origin (ignore errors if no remote)
+      try {
+        await this.gitCommand(`push origin ${defaultBranch}`, repoPath);
+      } catch {
+        console.log('[Worktree] No remote to push to, continuing...');
+      }
 
       console.log(`[Worktree] Successfully merged ${branchName} into ${defaultBranch}`);
       return { success: true };
@@ -316,7 +372,12 @@ export class WorktreeManager {
       // Try to restore main repo to clean state
       try {
         await this.gitCommand(`checkout ${defaultBranch}`, repoPath);
-        await this.gitCommand(`reset --hard origin/${defaultBranch}`, repoPath);
+        try {
+          await this.gitCommand(`reset --hard origin/${defaultBranch}`, repoPath);
+        } catch {
+          // No remote, just reset to HEAD
+          await this.gitCommand(`reset --hard HEAD`, repoPath);
+        }
       } catch {
         // Ignore cleanup errors
       }
@@ -324,8 +385,24 @@ export class WorktreeManager {
       return {
         success: false,
         error: `Merge failed: ${errorMessage}`,
+        conflictType: 'other',
+        conflictDetails: errorMessage,
       };
     }
+  }
+
+  /**
+   * Get the main repo path (for conflict resolution)
+   */
+  getRepoPath(): string {
+    return this.config.repoPath;
+  }
+
+  /**
+   * Get the default branch name
+   */
+  getDefaultBranch(): string {
+    return this.config.defaultBranch;
   }
 
   /**
