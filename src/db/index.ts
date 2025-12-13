@@ -25,8 +25,9 @@ let isInitialized = false;
 
 /**
  * Get database configuration from environment variables
+ * Returns null if no database is configured
  */
-function getDbConfig(): DbConfig {
+function getDbConfig(): DbConfig | null {
   // If DATABASE_URL is provided, use it directly
   if (process.env.DATABASE_URL) {
     return {
@@ -40,20 +41,25 @@ function getDbConfig(): DbConfig {
     };
   }
 
-  // Otherwise use individual environment variables
-  return {
-    host: process.env.POSTGRES_HOST || 'localhost',
-    port: parseInt(process.env.POSTGRES_PORT || '5432', 10),
-    database: process.env.POSTGRES_DB || 'omega_arbiter',
-    user: process.env.POSTGRES_USER || 'omega',
-    password: process.env.POSTGRES_PASSWORD,
-    ssl: process.env.DATABASE_SSL === 'true'
-      ? { rejectUnauthorized: false }
-      : false,
-    max: parseInt(process.env.DATABASE_POOL_SIZE || '10', 10),
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
-  };
+  // Only use individual env vars if POSTGRES_HOST is explicitly set
+  if (process.env.POSTGRES_HOST) {
+    return {
+      host: process.env.POSTGRES_HOST,
+      port: parseInt(process.env.POSTGRES_PORT || '5432', 10),
+      database: process.env.POSTGRES_DB || 'omega_arbiter',
+      user: process.env.POSTGRES_USER || 'omega',
+      password: process.env.POSTGRES_PASSWORD,
+      ssl: process.env.DATABASE_SSL === 'true'
+        ? { rejectUnauthorized: false }
+        : false,
+      max: parseInt(process.env.DATABASE_POOL_SIZE || '10', 10),
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    };
+  }
+
+  // No database configured
+  return null;
 }
 
 /**
@@ -67,7 +73,7 @@ export async function initializeDb(): Promise<boolean> {
   const config = getDbConfig();
 
   // Check if we have necessary config
-  if (!config.connectionString && !config.host) {
+  if (!config) {
     console.log('[DB] No database configuration found, PostgreSQL logging disabled');
     return false;
   }

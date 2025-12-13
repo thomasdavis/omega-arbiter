@@ -146,7 +146,7 @@ Be concise and fix only what's broken. Do not add unnecessary features or refact
 
         # Run Claude to fix the issues
         log "Running Claude Code..."
-        if claude -p "$prompt" --output-format stream-json --permission-mode acceptEdits 2>&1 | tee -a "$LOG_FILE"; then
+        if claude -p "$prompt" --verbose --output-format stream-json --permission-mode acceptEdits 2>&1 | tee -a "$LOG_FILE"; then
             log "Claude completed successfully"
 
             # Check if there are changes to commit
