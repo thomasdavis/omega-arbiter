@@ -13,4 +13,5 @@ export {
 export type {
   FetchResult,
   FetchOptions,
+  FetchErrorType,
 } from './fetch.js';

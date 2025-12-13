@@ -3,14 +3,27 @@
  * Provides a robust fetch function with proper error handling for Omega Arbiter
  */
 
+export type FetchErrorType =
+  | 'NETWORK_ERROR'      // Network connectivity issues
+  | 'TIMEOUT'            // Request timed out
+  | 'DNS_ERROR'          // DNS resolution failed
+  | 'CONNECTION_REFUSED' // Server refused connection
+  | 'SSL_ERROR'          // SSL/TLS certificate issues
+  | 'INVALID_URL'        // Malformed URL
+  | 'HTTP_ERROR'         // HTTP error status codes
+  | 'PARSE_ERROR'        // Failed to parse response
+  | 'UNKNOWN';           // Unclassified error
+
 export interface FetchResult<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
+  errorType?: FetchErrorType;
   statusCode?: number;
   statusText?: string;
   headers?: Record<string, string>;
   responseTime: number;
+  url?: string;
 }
 
 export interface FetchOptions {
@@ -20,11 +33,43 @@ export interface FetchOptions {
   timeout?: number;
   retries?: number;
   retryDelay?: number;
+  maxSize?: number;
+  followRedirects?: boolean;
 }
 
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
 const DEFAULT_RETRIES = 0;
 const DEFAULT_RETRY_DELAY = 1000;
+const DEFAULT_MAX_SIZE = 10 * 1024 * 1024; // 10MB
+
+/**
+ * Classify error type based on error message/code
+ */
+function classifyError(error: Error): FetchErrorType {
+  const message = error.message.toLowerCase();
+  const name = error.name.toLowerCase();
+
+  if (message.includes('enotfound') || message.includes('getaddrinfo')) {
+    return 'DNS_ERROR';
+  }
+  if (message.includes('econnrefused') || message.includes('connection refused')) {
+    return 'CONNECTION_REFUSED';
+  }
+  if (message.includes('timeout') || message.includes('etimedout') || name.includes('timeout')) {
+    return 'TIMEOUT';
+  }
+  if (message.includes('ssl') || message.includes('certificate') || message.includes('cert')) {
+    return 'SSL_ERROR';
+  }
+  if (message.includes('invalid url') || message.includes('malformed')) {
+    return 'INVALID_URL';
+  }
+  if (message.includes('econnreset') || message.includes('socket hang up')) {
+    return 'NETWORK_ERROR';
+  }
+
+  return 'UNKNOWN';
+}
 
 /**
  * Fetch a URL with comprehensive error handling
@@ -40,10 +85,12 @@ export async function fetchUrl<T = unknown>(
     timeout = DEFAULT_TIMEOUT,
     retries = DEFAULT_RETRIES,
     retryDelay = DEFAULT_RETRY_DELAY,
+    maxSize = DEFAULT_MAX_SIZE,
   } = options;
 
   const startTime = Date.now();
   let lastError: string | undefined;
+  let lastErrorType: FetchErrorType | undefined;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -87,6 +134,21 @@ export async function fetchUrl<T = unknown>(
         responseHeaders[key] = value;
       });
 
+      // Check response size before reading
+      const contentLength = response.headers.get('content-length');
+      if (contentLength && parseInt(contentLength, 10) > maxSize) {
+        return {
+          success: false,
+          error: `Response too large: ${contentLength} bytes exceeds max size of ${maxSize} bytes`,
+          errorType: 'PARSE_ERROR',
+          statusCode: response.status,
+          statusText: response.statusText,
+          headers: responseHeaders,
+          responseTime,
+          url,
+        };
+      }
+
       // Try to parse response body
       let data: T | undefined;
       const contentType = response.headers.get('content-type') || '';
@@ -111,11 +173,13 @@ export async function fetchUrl<T = unknown>(
         return {
           success: false,
           error: `HTTP ${response.status}: ${response.statusText}`,
+          errorType: 'HTTP_ERROR',
           statusCode: response.status,
           statusText: response.statusText,
           headers: responseHeaders,
           data,
           responseTime,
+          url,
         };
       }
 
@@ -127,6 +191,7 @@ export async function fetchUrl<T = unknown>(
         statusText: response.statusText,
         headers: responseHeaders,
         responseTime,
+        url,
       };
 
     } catch (error) {
@@ -135,21 +200,22 @@ export async function fetchUrl<T = unknown>(
       if (error instanceof Error) {
         if (error.name === 'AbortError') {
           lastError = `Request timed out after ${timeout}ms`;
-        } else if (error.message.includes('ECONNREFUSED')) {
-          lastError = `Connection refused - server may be down or unreachable`;
-        } else if (error.message.includes('ENOTFOUND')) {
-          lastError = `DNS lookup failed - hostname not found`;
-        } else if (error.message.includes('ETIMEDOUT')) {
-          lastError = `Connection timed out`;
-        } else if (error.message.includes('ECONNRESET')) {
-          lastError = `Connection reset by server`;
-        } else if (error.message.includes('certificate')) {
-          lastError = `SSL/TLS certificate error: ${error.message}`;
+          lastErrorType = 'TIMEOUT';
         } else {
-          lastError = error.message;
+          lastErrorType = classifyError(error);
+          if (lastErrorType === 'CONNECTION_REFUSED') {
+            lastError = `Connection refused - server may be down or unreachable`;
+          } else if (lastErrorType === 'DNS_ERROR') {
+            lastError = `DNS lookup failed - hostname not found`;
+          } else if (lastErrorType === 'SSL_ERROR') {
+            lastError = `SSL/TLS certificate error: ${error.message}`;
+          } else {
+            lastError = error.message;
+          }
         }
       } else {
         lastError = String(error);
+        lastErrorType = 'UNKNOWN';
       }
 
       console.error(`[Fetch] Error on attempt ${attempt + 1}: ${lastError}`);
@@ -162,7 +228,9 @@ export async function fetchUrl<T = unknown>(
         return {
           success: false,
           error: lastError,
+          errorType: lastErrorType,
           responseTime,
+          url,
         };
       }
     }
@@ -172,7 +240,9 @@ export async function fetchUrl<T = unknown>(
   return {
     success: false,
     error: lastError || 'Unknown error',
+    errorType: lastErrorType || 'UNKNOWN',
     responseTime: Date.now() - startTime,
+    url,
   };
 }
 
