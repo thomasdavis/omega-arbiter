@@ -8,7 +8,8 @@
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "start": "tsx src/index.ts",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "fetch": "tsx src/test-fetch.ts"
   },
   "dependencies": {
     "discord.js": "^14.24.2",
