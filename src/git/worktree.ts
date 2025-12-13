@@ -6,7 +6,7 @@
 
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
-import { mkdir, rm, access, readdir } from 'fs/promises';
+import { mkdir, rm, access, readdir, symlink } from 'fs/promises';
 import { join } from 'path';
 import { WorkSession, WorkSessionStatus, ChatMessage } from '../types.js';
 
@@ -116,6 +116,17 @@ export class WorktreeManager {
         `worktree add "${worktreePath}" ${branchName}`,
         this.config.repoPath
       );
+
+      // Symlink node_modules from main repo (required for pre-commit hooks)
+      const mainNodeModules = join(this.config.repoPath, 'node_modules');
+      const worktreeNodeModules = join(worktreePath, 'node_modules');
+      try {
+        await symlink(mainNodeModules, worktreeNodeModules, 'dir');
+        console.log(`[Worktree] Symlinked node_modules for session ${sessionId}`);
+      } catch (symlinkError) {
+        // Might fail if node_modules doesn't exist or already linked
+        console.warn(`[Worktree] Could not symlink node_modules:`, symlinkError);
+      }
 
       session.status = 'active';
       session.updatedAt = new Date();
