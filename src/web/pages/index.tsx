@@ -1,46 +1,6 @@
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
-interface LogEntry {
-  timestamp: string;
-  level: string;
-  source: string;
-  message: string;
-}
-
-export default function Dashboard() {
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [filter, setFilter] = useState('');
-  const [autoRefresh, setAutoRefresh] = useState(true);
-
-  const fetchLogs = async () => {
-    try {
-      const res = await fetch(`/api/logs?limit=100${filter ? `&filter=${filter}` : ''}`);
-      const data = await res.json();
-      setLogs(data.logs || []);
-    } catch (err) {
-      console.error('Failed to fetch logs:', err);
-    }
-  };
-
-  useEffect(() => {
-    fetchLogs();
-    if (autoRefresh) {
-      const interval = setInterval(fetchLogs, 2000);
-      return () => clearInterval(interval);
-    }
-  }, [filter, autoRefresh]);
-
-  const getLevelColor = (level: string) => {
-    switch (level.toLowerCase()) {
-      case 'error': return '#ff6b6b';
-      case 'warn': return '#ffd93d';
-      case 'info': return '#6bcb77';
-      case 'claude': return '#a855f7';
-      default: return '#888';
-    }
-  };
-
+export default function HomePage() {
   return (
     <div style={{
       fontFamily: 'monospace',
@@ -49,95 +9,190 @@ export default function Dashboard() {
       minHeight: '100vh',
       padding: '20px'
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginBottom: '10px' }}>
-        <h1 style={{ color: '#a855f7', margin: 0 }}>Omega Arbiter Dashboard</h1>
-        <Link href="/browse" style={{
-          color: '#4da6ff',
-          textDecoration: 'none',
-          padding: '6px 12px',
-          backgroundColor: '#16213e',
-          borderRadius: '4px',
-          border: '1px solid #333'
-        }}>
+      {/* Navigation */}
+      <nav style={{
+        display: 'flex',
+        gap: '20px',
+        marginBottom: '30px',
+        padding: '10px 15px',
+        backgroundColor: '#16213e',
+        borderRadius: '6px'
+      }}>
+        <Link href="/" style={{ color: '#a855f7', textDecoration: 'none', fontWeight: 'bold' }}>
+          Home
+        </Link>
+        <Link href="/logs" style={{ color: '#4da6ff', textDecoration: 'none' }}>
+          Logs
+        </Link>
+        <Link href="/browse" style={{ color: '#4da6ff', textDecoration: 'none' }}>
           Browse Files
         </Link>
+      </nav>
+
+      {/* Hero Section */}
+      <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+        <h1 style={{
+          color: '#a855f7',
+          fontSize: '2.5rem',
+          marginBottom: '10px',
+          textShadow: '0 0 20px rgba(168, 85, 247, 0.3)'
+        }}>
+          Omega Arbiter
+        </h1>
+        <p style={{ color: '#888', fontSize: '1.2rem' }}>
+          A self-editing agent for autonomous development
+        </p>
       </div>
 
-      <div style={{ marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'center' }}>
-        <input
-          type="text"
-          placeholder="Filter logs (e.g., Claude, Decision, Error)"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          style={{
-            padding: '8px 12px',
-            backgroundColor: '#16213e',
-            border: '1px solid #444',
-            color: '#eee',
-            borderRadius: '4px',
-            width: '300px'
-          }}
-        />
-        <label style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-          <input
-            type="checkbox"
-            checked={autoRefresh}
-            onChange={(e) => setAutoRefresh(e.target.checked)}
-          />
-          Auto-refresh
-        </label>
-        <button
-          onClick={fetchLogs}
-          style={{
-            padding: '8px 16px',
-            backgroundColor: '#a855f7',
-            border: 'none',
-            color: 'white',
-            borderRadius: '4px',
-            cursor: 'pointer'
-          }}
-        >
-          Refresh
-        </button>
-      </div>
-
+      {/* About Section */}
       <div style={{
         backgroundColor: '#16213e',
-        borderRadius: '8px',
-        padding: '10px',
-        maxHeight: '80vh',
-        overflow: 'auto'
+        borderRadius: '12px',
+        padding: '30px',
+        marginBottom: '30px',
+        maxWidth: '900px',
+        margin: '0 auto 30px auto'
       }}>
-        {logs.length === 0 ? (
-          <p style={{ color: '#666' }}>No logs yet...</p>
-        ) : (
-          logs.map((log, i) => (
-            <div key={i} style={{
-              padding: '6px 10px',
-              borderBottom: '1px solid #333',
-              display: 'flex',
-              gap: '10px'
-            }}>
-              <span style={{ color: '#666', minWidth: '180px' }}>
-                {new Date(log.timestamp).toLocaleString()}
-              </span>
-              <span style={{
-                color: getLevelColor(log.level),
-                minWidth: '60px',
-                fontWeight: 'bold'
-              }}>
-                [{log.level}]
-              </span>
-              <span style={{ color: '#4da6ff', minWidth: '100px' }}>
-                {log.source}
-              </span>
-              <span style={{ flex: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                {log.message}
-              </span>
-            </div>
-          ))
-        )}
+        <h2 style={{ color: '#a855f7', marginTop: 0, marginBottom: '20px' }}>About</h2>
+        <p style={{ lineHeight: 1.7, marginBottom: '15px' }}>
+          Omega Arbiter is a self-editing agent that listens to chat transports (Discord, etc.)
+          and manages git worktrees for autonomous development. It uses AI-powered decision making
+          to evaluate incoming messages and determine the appropriate action.
+        </p>
+        <p style={{ lineHeight: 1.7 }}>
+          When triggered, it creates isolated git branches and worktrees to make code changes,
+          commits with proper attribution, and can even rebase and push changes automatically.
+        </p>
       </div>
+
+      {/* Features Grid */}
+      <div style={{
+        maxWidth: '900px',
+        margin: '0 auto 30px auto'
+      }}>
+        <h2 style={{ color: '#a855f7', marginBottom: '20px' }}>Features</h2>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+          gap: '20px'
+        }}>
+          <FeatureCard
+            title="Transport Abstraction"
+            description="Supports Discord with extensible architecture for Slack, CLI, and webhooks."
+          />
+          <FeatureCard
+            title="AI-Powered Decisions"
+            description="Evaluates incoming messages to decide whether and how to act on requests."
+          />
+          <FeatureCard
+            title="Git Worktree Management"
+            description="Creates isolated branches for each task, keeping work organized and safe."
+          />
+          <FeatureCard
+            title="Message Aggregation"
+            description="Handles successive messages that contribute to ongoing work sessions."
+          />
+          <FeatureCard
+            title="Self-Editing Workflow"
+            description="Commits, rebases, and manages code changes autonomously."
+          />
+          <FeatureCard
+            title="Real-time Logging"
+            description="View system activity and Claude outputs in the live logs dashboard."
+          />
+        </div>
+      </div>
+
+      {/* How It Works */}
+      <div style={{
+        backgroundColor: '#16213e',
+        borderRadius: '12px',
+        padding: '30px',
+        maxWidth: '900px',
+        margin: '0 auto 30px auto'
+      }}>
+        <h2 style={{ color: '#a855f7', marginTop: 0, marginBottom: '20px' }}>How It Works</h2>
+        <ol style={{ lineHeight: 1.8, paddingLeft: '20px', margin: 0 }}>
+          <li style={{ marginBottom: '10px' }}>
+            <strong style={{ color: '#4da6ff' }}>Message Reception:</strong> Messages arrive via transports and are normalized to a common format.
+          </li>
+          <li style={{ marginBottom: '10px' }}>
+            <strong style={{ color: '#4da6ff' }}>Decision System:</strong> AI evaluates each message and decides: ignore, acknowledge, respond, or self-edit.
+          </li>
+          <li style={{ marginBottom: '10px' }}>
+            <strong style={{ color: '#4da6ff' }}>Worktree Creation:</strong> For self-edit tasks, a new git branch and worktree are created.
+          </li>
+          <li style={{ marginBottom: '10px' }}>
+            <strong style={{ color: '#4da6ff' }}>Code Changes:</strong> Changes are made in the isolated worktree with full context.
+          </li>
+          <li>
+            <strong style={{ color: '#4da6ff' }}>Commit & Push:</strong> Changes are committed with attribution and can be pushed automatically.
+          </li>
+        </ol>
+      </div>
+
+      {/* Quick Links */}
+      <div style={{
+        maxWidth: '900px',
+        margin: '0 auto',
+        textAlign: 'center'
+      }}>
+        <h2 style={{ color: '#a855f7', marginBottom: '20px' }}>Quick Links</h2>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', flexWrap: 'wrap' }}>
+          <Link href="/logs" style={{
+            display: 'inline-block',
+            padding: '12px 24px',
+            backgroundColor: '#a855f7',
+            color: 'white',
+            textDecoration: 'none',
+            borderRadius: '6px',
+            fontWeight: 'bold',
+            transition: 'background-color 0.2s'
+          }}>
+            View Logs
+          </Link>
+          <Link href="/browse" style={{
+            display: 'inline-block',
+            padding: '12px 24px',
+            backgroundColor: '#16213e',
+            color: '#4da6ff',
+            textDecoration: 'none',
+            borderRadius: '6px',
+            fontWeight: 'bold',
+            border: '1px solid #444'
+          }}>
+            Browse Files
+          </Link>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <footer style={{
+        marginTop: '60px',
+        textAlign: 'center',
+        color: '#666',
+        fontSize: '0.9rem'
+      }}>
+        <p>Omega Arbiter - Self-editing autonomous agent</p>
+      </footer>
+    </div>
+  );
+}
+
+function FeatureCard({ title, description }: { title: string; description: string }) {
+  return (
+    <div style={{
+      backgroundColor: '#16213e',
+      borderRadius: '8px',
+      padding: '20px',
+      border: '1px solid #333'
+    }}>
+      <h3 style={{ color: '#4da6ff', marginTop: 0, marginBottom: '10px', fontSize: '1rem' }}>
+        {title}
+      </h3>
+      <p style={{ color: '#aaa', margin: 0, fontSize: '0.9rem', lineHeight: 1.5 }}>
+        {description}
+      </p>
     </div>
   );
 }

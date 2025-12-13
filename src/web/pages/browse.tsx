@@ -85,11 +85,28 @@ export default function BrowsePage() {
       minHeight: '100vh',
       padding: '20px'
     }}>
+      {/* Navigation */}
+      <nav style={{
+        display: 'flex',
+        gap: '20px',
+        marginBottom: '20px',
+        padding: '10px 15px',
+        backgroundColor: '#16213e',
+        borderRadius: '6px'
+      }}>
+        <Link href="/" style={{ color: '#4da6ff', textDecoration: 'none' }}>
+          Home
+        </Link>
+        <Link href="/logs" style={{ color: '#4da6ff', textDecoration: 'none' }}>
+          Logs
+        </Link>
+        <Link href="/browse" style={{ color: '#a855f7', textDecoration: 'none', fontWeight: 'bold' }}>
+          Browse Files
+        </Link>
+      </nav>
+
       <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '20px' }}>
         <h1 style={{ color: '#a855f7', margin: 0 }}>Browse Files</h1>
-        <Link href="/" style={{ color: '#4da6ff', textDecoration: 'none' }}>
-          &larr; Back to Dashboard
-        </Link>
       </div>
 
       {/* Breadcrumb navigation */}
