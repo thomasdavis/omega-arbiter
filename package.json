@@ -9,7 +9,8 @@
     "build": "tsc",
     "start": "tsx src/index.ts",
     "type-check": "tsc --noEmit",
-    "fetch": "tsx src/test-fetch.ts"
+    "fetch": "tsx src/test-fetch.ts",
+    "prepare": "husky"
   },
   "dependencies": {
     "discord.js": "^14.24.2",
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.8.6",
+    "husky": "^9.1.7",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }

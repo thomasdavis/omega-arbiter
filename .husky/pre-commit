@@ -1,0 +1,21 @@
+#!/bin/sh
+
+echo "Running pre-commit checks..."
+
+# Type check
+echo "Type checking..."
+npm run type-check
+if [ $? -ne 0 ]; then
+  echo "Type check failed! Fix errors before committing."
+  exit 1
+fi
+
+# Build
+echo "Building..."
+npm run build
+if [ $? -ne 0 ]; then
+  echo "Build failed! Fix errors before committing."
+  exit 1
+fi
+
+echo "Pre-commit checks passed!"
