@@ -22,10 +22,12 @@ export class DiscordTransport extends BaseTransport {
   private client: Client;
   private botToken: string;
   private ready = false;
+  private allowedChannelId: string | null = null;
 
-  constructor(botToken: string) {
+  constructor(botToken: string, allowedChannelId?: string) {
     super();
     this.botToken = botToken;
+    this.allowedChannelId = allowedChannelId ?? null;
 
     // Create Discord client with required intents
     this.client = new Client({
@@ -54,6 +56,12 @@ export class DiscordTransport extends BaseTransport {
       try {
         // Ignore own messages
         if (message.author.id === this.client.user?.id) {
+          return;
+        }
+
+        // Filter by allowed channel if configured
+        if (this.allowedChannelId && message.channel.id !== this.allowedChannelId) {
+          console.log(`[Discord] Ignoring message from channel ${message.channel.id} (not allowed channel ${this.allowedChannelId})`);
           return;
         }
 

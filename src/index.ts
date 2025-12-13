@@ -119,7 +119,11 @@ async function main(): Promise<void> {
 
   // Add Discord transport
   const discordToken = process.env.DISCORD_BOT_TOKEN!;
-  const discordTransport = new DiscordTransport(discordToken);
+  // Only respond to messages in the specified channel (omega-debug channel)
+  // Can be overridden via DISCORD_ALLOWED_CHANNEL_ID env var
+  const allowedChannelId = process.env.DISCORD_ALLOWED_CHANNEL_ID ?? '1441038048946028666';
+  console.log(`  Allowed channel: ${allowedChannelId}`);
+  const discordTransport = new DiscordTransport(discordToken, allowedChannelId);
   arbiter.addTransport('discord', discordTransport);
 
   // Start the arbiter
