@@ -1,0 +1,24 @@
+{
+  "name": "omega-arbiter",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Self-editing arbiter that listens to chat transports and manages git worktrees for autonomous development",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "discord.js": "^14.24.2",
+    "dotenv": "^16.6.1",
+    "openai": "^4.104.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.8.6",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}
