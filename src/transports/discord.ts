@@ -214,6 +214,21 @@ export class DiscordTransport extends BaseTransport {
     return this.client.user?.username ?? 'Arbiter';
   }
 
+  /**
+   * Find a channel ID by name (searches all guilds)
+   */
+  findChannelByName(channelName: string): string | null {
+    for (const guild of this.client.guilds.cache.values()) {
+      const channel = guild.channels.cache.find(
+        (ch) => ch.name === channelName && this.isTextBasedChannel(ch)
+      );
+      if (channel) {
+        return channel.id;
+      }
+    }
+    return null;
+  }
+
   private isTextBasedChannel(channel: unknown): boolean {
     return (
       channel instanceof TextChannel ||

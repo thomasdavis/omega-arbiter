@@ -57,6 +57,23 @@ async function main(): Promise<void> {
   // Add event listeners
   arbiter.on('ready', () => {
     console.log('[Main] Arbiter is ready and listening');
+
+    // Configure status channel after Discord is connected
+    const statusChannelId = process.env.STATUS_CHANNEL_ID;
+    const statusChannelName = process.env.STATUS_CHANNEL_NAME;
+
+    if (statusChannelId) {
+      arbiter.setStatusChannel(statusChannelId);
+      console.log(`[Main] Status channel set to ID: ${statusChannelId}`);
+    } else if (statusChannelName) {
+      const channelId = discordTransport.findChannelByName(statusChannelName);
+      if (channelId) {
+        arbiter.setStatusChannel(channelId);
+        console.log(`[Main] Status channel set to #${statusChannelName} (${channelId})`);
+      } else {
+        console.warn(`[Main] Status channel #${statusChannelName} not found`);
+      }
+    }
   });
 
   arbiter.on('message', (message) => {

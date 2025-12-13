@@ -23,6 +23,7 @@ import { makeDecision, detectErrorPatterns } from './decision.js';
 import { generateResponse, getQuickAcknowledgment } from './respond.js';
 import { ClaudeRunner, buildClaudePrompt, DiscordOutputStream } from '../claude/index.js';
 import { createCheckpoint, buildContinuationPrompt } from './checkpoint.js';
+import { getCoordinator, SessionCoordinator } from './coordinator.js';
 import type { PromptContext } from '../claude/index.js';
 import { DiscordTransport } from '../transports/discord.js';
 
@@ -45,10 +46,16 @@ export class Arbiter extends EventEmitter {
   private messageQueue: MessageQueue;
   private messageAggregator: MessageAggregator;
   private config: ArbiterConfig;
+  private coordinator: SessionCoordinator;
+  private statusChannelId: string | null = null;
 
   constructor(config: ArbiterConfig) {
     super();
     this.config = config;
+
+    // Initialize coordinator
+    this.coordinator = getCoordinator();
+    this.setupCoordinatorHandlers();
 
     // Initialize worktree manager
     this.worktreeManager = new WorktreeManager({
@@ -68,6 +75,44 @@ export class Arbiter extends EventEmitter {
 
     // Set up queue processor
     this.messageQueue.setProcessor(this.processQueuedMessage.bind(this));
+  }
+
+  /**
+   * Set up handlers for coordinator events
+   */
+  private setupCoordinatorHandlers(): void {
+    // Handle notification events
+    this.coordinator.on('notify', async (message: string, channelId?: string) => {
+      const targetChannel = channelId || this.statusChannelId;
+      if (!targetChannel) {
+        console.log(`[Arbiter] Notification (no channel): ${message}`);
+        return;
+      }
+
+      // Find a transport that can send to this channel
+      for (const transport of this.transports.values()) {
+        try {
+          await transport.send(targetChannel, message);
+          break;
+        } catch {
+          // Try next transport
+        }
+      }
+    });
+
+    // Log state changes
+    this.coordinator.on('state:changed', (oldState, newState) => {
+      console.log(`[Arbiter] Coordinator state: ${oldState} → ${newState}`);
+    });
+  }
+
+  /**
+   * Set the status channel for bot notifications
+   */
+  setStatusChannel(channelId: string): void {
+    this.statusChannelId = channelId;
+    this.coordinator.setStatusChannel(channelId);
+    console.log(`[Arbiter] Status channel set to ${channelId}`);
   }
 
   /**
@@ -97,6 +142,9 @@ export class Arbiter extends EventEmitter {
   async start(): Promise<void> {
     console.log('[Arbiter] Starting...');
 
+    // Set up signal handlers for graceful shutdown
+    this.coordinator.setupSignalHandlers();
+
     // Initialize worktree manager
     await this.worktreeManager.initialize();
 
@@ -113,6 +161,11 @@ export class Arbiter extends EventEmitter {
 
     this.emit('ready');
     console.log('[Arbiter] Started successfully');
+
+    // Notify startup (after a short delay to ensure Discord is ready)
+    setTimeout(() => {
+      this.coordinator.notifyStartup();
+    }, 2000);
   }
 
   /**
@@ -277,15 +330,37 @@ export class Arbiter extends EventEmitter {
     const taskDescription = decision.suggestedApproach ?? primaryMessage.content.slice(0, 50);
     const channelId = primaryMessage.channelId;
 
+    // Check if we're accepting new sessions
+    if (!this.coordinator.canStartSession()) {
+      const pendingActions = this.coordinator.getPendingActions();
+      const reason = pendingActions[0]?.reason || 'pending action';
+      await transport.send(
+        channelId,
+        `⏳ **Cannot start new session**\n` +
+        `Reason: ${reason}\n` +
+        `Active sessions: ${this.coordinator.getActiveSessionCount()}\n\n` +
+        `Please wait for the bot to restart and try again.`
+      );
+      return;
+    }
+
     // Cast to DiscordTransport for edit capabilities
     const discordTransport = transport as DiscordTransport;
 
     let session: WorkSession | null = null;
     let outputStream: DiscordOutputStream | null = null;
+    let sessionRegistered = false;
 
     try {
       // Create work session
       session = await this.worktreeManager.createSession(primaryMessage, taskDescription);
+
+      // Register with coordinator
+      this.coordinator.registerSession(session);
+      sessionRegistered = true;
+
+      // Note: status channel should be configured via STATUS_CHANNEL_NAME or STATUS_CHANNEL_ID env vars
+      // This auto-setting is removed to prevent sessions in other channels from hijacking notifications
 
       // Add all related messages
       for (const msg of messages.slice(0, -1)) {
@@ -406,6 +481,14 @@ export class Arbiter extends EventEmitter {
             );
 
             this.emit('session:completed', session);
+
+            // Complete session with coordinator and request restart
+            this.coordinator.completeSession(session.id, true, taskDescription);
+            this.coordinator.requestRestart(
+              `Code merged to main: ${taskDescription}`,
+              primaryMessage.authorName,
+              channelId
+            );
           } else {
             // Merge failed even after conflict resolution attempt
             await outputStream.finalize(
@@ -415,15 +498,21 @@ export class Arbiter extends EventEmitter {
               `Commit: \`${commitHash.slice(0, 8)}\``,
               false
             );
+
+            // Complete session as failed
+            this.coordinator.completeSession(session.id, false, mergeResult.error);
           }
         } else {
           // No changes to commit
           await outputStream.finalize(
             `**No changes were made**\n\n` +
             `Claude completed but didn't modify any files.\n\n` +
-            `Summary: ${result.summary.slice(0, 1500)}`,
+            `Summary: ${String(result.summary || 'No output').slice(0, 1500)}`,
             true
           );
+
+          // Complete session (no restart needed, no changes made)
+          this.coordinator.completeSession(session.id, true, 'No changes made');
         }
       } else {
         // Claude failed
@@ -431,9 +520,12 @@ export class Arbiter extends EventEmitter {
           `**Task failed**\n\n` +
           `Exit code: ${result.exitCode}\n\n` +
           `Branch \`${session.branchName}\` has been kept for debugging.\n\n` +
-          `Output: ${result.summary.slice(0, 1500)}`,
+          `Output: ${String(result.summary || 'No output').slice(0, 1500)}`,
           false
         );
+
+        // Complete session as failed
+        this.coordinator.completeSession(session.id, false, `Exit code: ${result.exitCode}`);
       }
 
       // Clean up worktree
@@ -455,6 +547,11 @@ export class Arbiter extends EventEmitter {
           channelId,
           `❌ Failed to start self-edit session: ${errorMessage}`
         );
+      }
+
+      // Complete session as failed (if it was registered)
+      if (session && sessionRegistered) {
+        this.coordinator.completeSession(session.id, false, errorMessage);
       }
 
       // Clean up if session was created
@@ -576,6 +673,15 @@ export class Arbiter extends EventEmitter {
               true
             );
             this.emit('session:completed', session);
+
+            // Complete session and request restart
+            const taskDescription = session.triggeredBy.content.slice(0, 50);
+            this.coordinator.completeSession(session.id, true, taskDescription);
+            this.coordinator.requestRestart(
+              `Code merged to main: ${taskDescription}`,
+              session.triggeredBy.authorName,
+              session.triggeredBy.channelId
+            );
           } else {
             await outputStream.finalize(
               `**Changes committed but merge failed**\n\n` +
@@ -583,6 +689,9 @@ export class Arbiter extends EventEmitter {
               `Branch \`${session.branchName}\` has been kept for manual resolution.`,
               false
             );
+
+            // Complete session as failed
+            this.coordinator.completeSession(session.id, false, mergeResult.error);
           }
         } else {
           await outputStream.finalize(
@@ -590,6 +699,9 @@ export class Arbiter extends EventEmitter {
             `Summary: ${String(result.summary || 'No output').slice(0, 1500)}`,
             true
           );
+
+          // Complete session (no restart needed)
+          this.coordinator.completeSession(session.id, true, 'No additional changes');
         }
       } else {
         await outputStream.finalize(
@@ -599,6 +711,9 @@ export class Arbiter extends EventEmitter {
           `Output: ${String(result.summary || 'No output').slice(0, 1500)}`,
           false
         );
+
+        // Complete session as failed
+        this.coordinator.completeSession(session.id, false, `Continuation failed (exit ${result.exitCode})`);
       }
 
       // Clean up worktree
@@ -612,6 +727,9 @@ export class Arbiter extends EventEmitter {
       console.error('[Arbiter] Checkpoint continuation failed:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       await outputStream.finalize(`**Continuation failed**\n\nError: ${errorMessage}`, false);
+
+      // Complete session as failed
+      this.coordinator.completeSession(session.id, false, errorMessage);
 
       try {
         await this.worktreeManager.abandonSession(session.id);
