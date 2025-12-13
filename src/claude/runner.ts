@@ -39,6 +39,7 @@ export class ClaudeRunner extends EventEmitter {
       const args = [
         '-p', prompt,
         '--output-format', 'stream-json',
+        '--verbose',
         '--permission-mode', 'acceptEdits',
       ];
 

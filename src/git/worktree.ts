@@ -80,6 +80,10 @@ export class WorktreeManager {
       createdAt: new Date(),
       updatedAt: new Date(),
       commits: [],
+      // Checkpoint & Continue fields
+      pendingMessages: [],
+      shouldCheckpoint: false,
+      checkpointCount: 0,
     };
 
     this.sessions.set(sessionId, session);

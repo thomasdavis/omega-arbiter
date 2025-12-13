@@ -22,6 +22,7 @@ import { MessageQueue, MessageAggregator, QueuedMessage } from '../queue/message
 import { makeDecision, detectErrorPatterns } from './decision.js';
 import { generateResponse, getQuickAcknowledgment } from './respond.js';
 import { ClaudeRunner, buildClaudePrompt, DiscordOutputStream } from '../claude/index.js';
+import { createCheckpoint, buildContinuationPrompt } from './checkpoint.js';
 import type { PromptContext } from '../claude/index.js';
 import { DiscordTransport } from '../transports/discord.js';
 
@@ -152,13 +153,17 @@ export class Arbiter extends EventEmitter {
         this.worktreeManager.addMessageToSession(existingSession.id, message);
         this.messageQueue.associateWithSession(message.id, existingSession.id);
 
-        // Queue for processing within session context
-        this.messageQueue.enqueue(message, {
-          sessionId: existingSession.id,
-          priority: 'high',
-        });
+        // Add to pending messages for checkpoint & continue
+        existingSession.pendingMessages.push(message);
+        existingSession.shouldCheckpoint = true;
 
-        console.log(`[Arbiter] Added message to existing session ${existingSession.id}`);
+        // Notify Discord that message was received
+        await transport.send(
+          message.channelId,
+          `📝 Got it! Will incorporate "${message.content.slice(0, 50)}${message.content.length > 50 ? '...' : ''}" after current operation completes.`
+        );
+
+        console.log(`[Arbiter] Added follow-up message to session ${existingSession.id}, flagged for checkpoint`);
         return;
       }
 
@@ -323,13 +328,22 @@ export class Arbiter extends EventEmitter {
       outputStream.append('\n\n🚀 Running Claude Code CLI...\n');
       await outputStream.flush();
 
-      // Run Claude Code CLI
+      // Run Claude Code CLI with checkpoint support
+      let checkpointAborted = false;
       const runner = new ClaudeRunner();
+
       const result = await runner.run({
         workdir: session.worktreePath,
         prompt: claudePrompt,
         onOutput: async (event) => {
           await outputStream!.handleEvent(event);
+
+          // Check for checkpoint after tool completion
+          if (event.type === 'tool_result' && session!.shouldCheckpoint && !checkpointAborted) {
+            console.log('[Arbiter] Checkpoint requested, aborting current Claude run...');
+            checkpointAborted = true;
+            runner.abort();
+          }
         },
         onError: (error) => {
           console.error('[Arbiter] Claude error:', error);
@@ -337,6 +351,12 @@ export class Arbiter extends EventEmitter {
       });
 
       console.log(`[Arbiter] Claude finished with exit code ${result.exitCode}`);
+
+      // Handle checkpoint continuation
+      if (checkpointAborted) {
+        await this.handleCheckpointContinuation(session, outputStream, discordTransport);
+        return; // Continuation handles the rest
+      }
 
       if (result.success) {
         // Commit the changes
@@ -444,6 +464,159 @@ export class Arbiter extends EventEmitter {
         } catch {
           // Ignore cleanup errors
         }
+      }
+    }
+  }
+
+  /**
+   * Handle checkpoint and continuation when follow-up messages arrive
+   */
+  private async handleCheckpointContinuation(
+    session: WorkSession,
+    outputStream: DiscordOutputStream,
+    transport: DiscordTransport
+  ): Promise<void> {
+    console.log(`[Arbiter] Handling checkpoint continuation for session ${session.id}`);
+
+    try {
+      // Notify user
+      outputStream.append('\n\n🔄 Incorporating new instructions...');
+      await outputStream.flush();
+
+      // Get the current diff before committing
+      const diff = await this.worktreeManager.getDiff(session.id);
+
+      // Create checkpoint commit
+      const commitHash = await createCheckpoint(session, this.worktreeManager);
+      if (commitHash) {
+        outputStream.append(`\n📝 Checkpoint ${session.checkpointCount} committed: \`${commitHash.slice(0, 8)}\``);
+        await outputStream.flush();
+      }
+
+      // Build continuation prompt with pending messages
+      const continuationPrompt = buildContinuationPrompt(session, diff);
+
+      // Clear the checkpoint flags
+      const pendingCount = session.pendingMessages.length;
+      session.pendingMessages = [];
+      session.shouldCheckpoint = false;
+
+      outputStream.append(`\n🚀 Continuing with ${pendingCount} new instruction(s)...\n`);
+      await outputStream.flush();
+
+      // Run Claude again with continuation prompt
+      let checkpointAborted = false;
+      const runner = new ClaudeRunner();
+
+      const result = await runner.run({
+        workdir: session.worktreePath,
+        prompt: continuationPrompt,
+        onOutput: async (event) => {
+          await outputStream.handleEvent(event);
+
+          // Check for another checkpoint (user might send more follow-ups)
+          if (event.type === 'tool_result' && session.shouldCheckpoint && !checkpointAborted) {
+            console.log('[Arbiter] Another checkpoint requested during continuation...');
+            checkpointAborted = true;
+            runner.abort();
+          }
+        },
+        onError: (error) => {
+          console.error('[Arbiter] Claude continuation error:', error);
+        },
+      });
+
+      // Handle nested checkpoint (recursive)
+      if (checkpointAborted) {
+        await this.handleCheckpointContinuation(session, outputStream, transport);
+        return;
+      }
+
+      // Handle completion - same as original flow
+      if (result.success) {
+        outputStream.append('\n\n📝 Committing final changes...');
+        await outputStream.flush();
+
+        const finalCommitHash = await this.worktreeManager.commitChanges(
+          session.id,
+          `Self-edit: ${session.triggeredBy.content.slice(0, 50)}\n\nRequested by: ${session.triggeredBy.authorName}\nIncluded ${session.checkpointCount} checkpoint(s)`
+        );
+
+        if (finalCommitHash) {
+          outputStream.append('\n\n🔀 Merging to main...');
+          await outputStream.flush();
+
+          let mergeResult = await this.worktreeManager.mergeToMain(session.id);
+
+          if (!mergeResult.success && mergeResult.conflictType) {
+            outputStream.append('\n\n⚠️ Merge conflict detected! Spawning Claude to resolve...');
+            await outputStream.flush();
+
+            const conflictResolved = await this.resolveConflictsWithClaude(
+              session,
+              mergeResult,
+              outputStream,
+              transport
+            );
+
+            if (conflictResolved) {
+              outputStream.append('\n\n🔀 Retrying merge...');
+              await outputStream.flush();
+              mergeResult = await this.worktreeManager.mergeToMain(session.id);
+            }
+          }
+
+          if (mergeResult.success) {
+            await outputStream.finalize(
+              `**Changes merged to main!**\n\n` +
+              `Commit: \`${finalCommitHash.slice(0, 8)}\`\n` +
+              `Branch: \`${session.branchName}\`\n` +
+              `Checkpoints: ${session.checkpointCount}\n\n` +
+              `**Summary:**\n${String(result.summary || 'No output').slice(0, 1500)}`,
+              true
+            );
+            this.emit('session:completed', session);
+          } else {
+            await outputStream.finalize(
+              `**Changes committed but merge failed**\n\n` +
+              `Error: ${mergeResult.error}\n\n` +
+              `Branch \`${session.branchName}\` has been kept for manual resolution.`,
+              false
+            );
+          }
+        } else {
+          await outputStream.finalize(
+            `**No additional changes made**\n\n` +
+            `Summary: ${String(result.summary || 'No output').slice(0, 1500)}`,
+            true
+          );
+        }
+      } else {
+        await outputStream.finalize(
+          `**Continuation failed**\n\n` +
+          `Exit code: ${result.exitCode}\n\n` +
+          `Branch \`${session.branchName}\` has been kept for debugging.\n\n` +
+          `Output: ${String(result.summary || 'No output').slice(0, 1500)}`,
+          false
+        );
+      }
+
+      // Clean up worktree
+      try {
+        await this.worktreeManager.completeSession(session.id);
+      } catch (cleanupError) {
+        console.error('[Arbiter] Worktree cleanup error:', cleanupError);
+      }
+
+    } catch (error) {
+      console.error('[Arbiter] Checkpoint continuation failed:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      await outputStream.finalize(`**Continuation failed**\n\nError: ${errorMessage}`, false);
+
+      try {
+        await this.worktreeManager.abandonSession(session.id);
+      } catch {
+        // Ignore cleanup errors
       }
     }
   }

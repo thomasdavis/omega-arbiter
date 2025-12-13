@@ -66,6 +66,11 @@ export interface WorkSession {
   createdAt: Date;
   updatedAt: Date;
   commits: string[];
+
+  // Checkpoint & Continue fields
+  pendingMessages: ChatMessage[];    // Follow-up messages awaiting delivery
+  shouldCheckpoint: boolean;         // Flag to trigger checkpoint on next tool_result
+  checkpointCount: number;           // Number of checkpoints in this session
 }
 
 export type WorkSessionStatus =
