@@ -6,6 +6,7 @@
 
 import { EventEmitter } from 'events';
 import { WorkSession } from '../types.js';
+import { getLogStore } from '../logs/index.js';
 
 /**
  * Types of actions that can be queued
@@ -71,6 +72,7 @@ export class SessionCoordinator extends EventEmitter {
 
   constructor() {
     super();
+    getLogStore().system('Coordinator', 'Session coordinator initialized');
   }
 
   /**
@@ -141,6 +143,12 @@ export class SessionCoordinator extends EventEmitter {
     this.emit('session:registered', activeSession);
 
     console.log(`[Coordinator] Session registered: ${session.id} (${this.activeSessions.size} active)`);
+    getLogStore().info('Coordinator', `Session registered: ${session.id}`, {
+      sessionId: session.id,
+      channelName: activeSession.channelName,
+      triggeredBy: activeSession.triggeredBy,
+      description: activeSession.description,
+    });
 
     // Notify status channel
     this.notify(
@@ -171,6 +179,13 @@ export class SessionCoordinator extends EventEmitter {
     const emoji = success ? '✅' : '❌';
 
     console.log(`[Coordinator] Session completed: ${sessionId} (${remaining} remaining)`);
+    getLogStore().info('Coordinator', `Session ${success ? 'completed' : 'failed'}: ${sessionId}`, {
+      sessionId,
+      success,
+      duration,
+      remaining,
+      summary: summary?.slice(0, 200),
+    });
 
     // Notify status channel
     this.notify(
@@ -212,6 +227,13 @@ export class SessionCoordinator extends EventEmitter {
     const activeSessions = this.activeSessions.size;
 
     console.log(`[Coordinator] Action queued: ${type} - ${reason} (${activeSessions} sessions active)`);
+    getLogStore().system('Coordinator', `Action queued: ${type}`, {
+      actionId: action.id,
+      type,
+      reason,
+      requestedBy,
+      activeSessions,
+    });
 
     // Transition to draining state
     if (this.state === 'running') {
@@ -365,6 +387,7 @@ export class SessionCoordinator extends EventEmitter {
    */
   notifyStartup(): void {
     const startTime = new Date().toISOString();
+    getLogStore().system('Coordinator', 'Bot started', { startTime });
     this.notify(
       `🟢 **Bot Online**\n` +
       `Started at: ${startTime}\n` +
