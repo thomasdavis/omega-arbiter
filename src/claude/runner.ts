@@ -5,6 +5,7 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
+import { getLogStore } from '../logs/index.js';
 
 export interface ClaudeEvent {
   type: 'text' | 'tool_use' | 'tool_result' | 'result' | 'error' | 'system';
@@ -45,6 +46,7 @@ export class ClaudeRunner extends EventEmitter {
 
       console.log(`[ClaudeRunner] Starting in ${workdir}`);
       console.log(`[ClaudeRunner] Prompt: ${prompt.slice(0, 200)}...`);
+      getLogStore().claude('ClaudeRunner', `Starting Claude in ${workdir}`, { promptPreview: prompt.slice(0, 200) });
 
       this.process = spawn('claude', args, {
         cwd: workdir,
@@ -77,6 +79,12 @@ export class ClaudeRunner extends EventEmitter {
               lastContent = event.content || lastContent;
               onOutput?.(event);
               this.emit('output', event);
+              // Log Claude output to store
+              if (event.type === 'text' && event.content) {
+                getLogStore().claude('Claude', event.content.slice(0, 500));
+              } else if (event.type === 'tool_use') {
+                getLogStore().claude('Claude', `Tool: ${event.content}`);
+              }
             }
           } catch (err) {
             // Log but don't fail on parse errors
@@ -97,6 +105,7 @@ export class ClaudeRunner extends EventEmitter {
       this.process.on('close', (code) => {
         const exitCode = code ?? 1;
         console.log(`[ClaudeRunner] Process exited with code ${exitCode}`);
+        getLogStore().claude('ClaudeRunner', `Claude exited with code ${exitCode}`, { exitCode, aborted: this.aborted });
 
         // Process any remaining buffer
         if (buffer.trim()) {

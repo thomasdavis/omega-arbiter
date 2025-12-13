@@ -14,6 +14,7 @@ import {
 } from 'discord.js';
 import { BaseTransport } from './base.js';
 import { ChatMessage, TransportType, Attachment } from '../types.js';
+import { getLogStore } from '../logs/index.js';
 
 export class DiscordTransport extends BaseTransport {
   type: TransportType = 'discord';
@@ -57,6 +58,15 @@ export class DiscordTransport extends BaseTransport {
         }
 
         const chatMessage = this.convertMessage(message);
+
+        // Log incoming message
+        getLogStore().message('Discord', `[${message.author.username}] ${message.content.slice(0, 500)}`, {
+          authorId: message.author.id,
+          authorName: message.author.username,
+          channelName: this.getChannelName(message),
+          channelId: message.channel.id,
+        });
+
         await this.emitMessage(chatMessage);
       } catch (error) {
         console.error('[Discord] Error processing message:', error);
@@ -131,6 +141,9 @@ export class DiscordTransport extends BaseTransport {
     if (!this.isTextBasedChannel(channel)) {
       throw new Error(`Channel ${channelId} is not text-based`);
     }
+
+    // Log bot reply
+    getLogStore().message('Bot', content.slice(0, 500), { channelId });
 
     // Handle Discord's 2000 character limit
     const chunks = this.chunkMessage(content, 2000);

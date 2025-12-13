@@ -26,6 +26,7 @@ import { createCheckpoint, buildContinuationPrompt } from './checkpoint.js';
 import { getCoordinator, SessionCoordinator } from './coordinator.js';
 import type { PromptContext } from '../claude/index.js';
 import { DiscordTransport } from '../transports/discord.js';
+import { getLogStore } from '../logs/index.js';
 
 /**
  * Events emitted by the arbiter
@@ -225,6 +226,15 @@ export class Arbiter extends EventEmitter {
       const decision = await makeDecision(message, context, this.config.model);
 
       this.emit('decision', message, decision);
+
+      // Log the decision
+      getLogStore().info('Decision', `${decision.actionType} (${decision.confidence}%): ${decision.reason}`, {
+        actionType: decision.actionType,
+        confidence: decision.confidence,
+        shouldAct: decision.shouldAct,
+        author: message.authorName,
+        messagePreview: message.content.slice(0, 100),
+      });
 
       // Act on the decision - be eager to engage!
       if (decision.shouldAct && decision.confidence >= this.config.confidenceThreshold) {
