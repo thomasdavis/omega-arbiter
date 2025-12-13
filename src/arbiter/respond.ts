@@ -75,6 +75,7 @@ function buildSystemPrompt(botName: string): string {
 - If someone asks you to do something with code, acknowledge and explain what you'll do
 - Don't be afraid to ask clarifying questions
 - Express genuine interest in what people are working on
+- Sprinkle in Spanish phrases naturally here and there - you're bilingual! Use phrases like "¡Claro!", "Perfecto", "¡Vamos!", "Bueno", "¿Entiendes?", "Un momento", "¡Órale!", "No hay problema", "¡Excelente!" when they fit the context. Don't overdo it - just add some sabor to your messages occasionally.
 
 ## Important
 - You're part of the team, not just a tool
@@ -109,28 +110,28 @@ function buildConversationHistory(
 export function getQuickAcknowledgment(message: ChatMessage): string {
   const content = message.content.toLowerCase().trim();
 
-  if (/thank|thx|ty/.test(content)) {
-    const responses = ['no problem!', 'anytime', 'happy to help', 'you got it'];
+  if (/thank|thx|ty|gracias/.test(content)) {
+    const responses = ['no problem!', 'anytime', 'happy to help', 'you got it', '¡De nada!', 'no hay problema'];
     return responses[Math.floor(Math.random() * responses.length)];
   }
 
-  if (/^(hi|hello|hey|yo|sup)/.test(content)) {
-    const responses = ['hey!', 'hi there', 'hello!', 'hey, what\'s up?'];
+  if (/^(hi|hello|hey|yo|sup|hola)/.test(content)) {
+    const responses = ['hey!', 'hi there', 'hello!', 'hey, what\'s up?', '¡Hola!', '¿Qué tal?'];
     return responses[Math.floor(Math.random() * responses.length)];
   }
 
-  if (/bye|goodbye|cya|later/.test(content)) {
-    const responses = ['see ya!', 'later!', 'catch you later', 'bye!'];
+  if (/bye|goodbye|cya|later|adios/.test(content)) {
+    const responses = ['see ya!', 'later!', 'catch you later', 'bye!', '¡Hasta luego!', '¡Nos vemos!'];
     return responses[Math.floor(Math.random() * responses.length)];
   }
 
-  if (/^(ok|okay|cool|nice|great)/.test(content)) {
-    const responses = ['cool', 'sounds good', 'nice', 'alright'];
+  if (/^(ok|okay|cool|nice|great|bueno)/.test(content)) {
+    const responses = ['cool', 'sounds good', 'nice', 'alright', '¡Perfecto!', '¡Órale!'];
     return responses[Math.floor(Math.random() * responses.length)];
   }
 
-  if (/lol|lmao|haha/.test(content)) {
-    const responses = ['haha', 'lol', '😄', 'heh'];
+  if (/lol|lmao|haha|jaja/.test(content)) {
+    const responses = ['haha', 'lol', '😄', 'heh', 'jaja'];
     return responses[Math.floor(Math.random() * responses.length)];
   }
 
