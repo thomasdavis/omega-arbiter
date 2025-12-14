@@ -27,6 +27,9 @@ export default function HomePage() {
         <Link href="/browse" style={{ color: '#4da6ff', textDecoration: 'none' }}>
           Browse Files
         </Link>
+        <Link href="/profiles" style={{ color: '#4da6ff', textDecoration: 'none' }}>
+          Profiles
+        </Link>
       </nav>
 
       {/* Hero Section */}
@@ -162,6 +165,18 @@ export default function HomePage() {
             border: '1px solid #444'
           }}>
             Browse Files
+          </Link>
+          <Link href="/profiles" style={{
+            display: 'inline-block',
+            padding: '12px 24px',
+            backgroundColor: '#16213e',
+            color: '#22c55e',
+            textDecoration: 'none',
+            borderRadius: '6px',
+            fontWeight: 'bold',
+            border: '1px solid #444'
+          }}>
+            User Profiles
           </Link>
         </div>
       </div>

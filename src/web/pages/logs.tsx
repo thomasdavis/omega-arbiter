@@ -67,6 +67,9 @@ export default function LogsPage() {
         <Link href="/browse" style={{ color: '#4da6ff', textDecoration: 'none' }}>
           Browse Files
         </Link>
+        <Link href="/profiles" style={{ color: '#4da6ff', textDecoration: 'none' }}>
+          Profiles
+        </Link>
       </nav>
 
       <h1 style={{ color: '#a855f7', marginBottom: '20px' }}>System Logs</h1>

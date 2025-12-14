@@ -103,6 +103,9 @@ export default function BrowsePage() {
         <Link href="/browse" style={{ color: '#a855f7', textDecoration: 'none', fontWeight: 'bold' }}>
           Browse Files
         </Link>
+        <Link href="/profiles" style={{ color: '#4da6ff', textDecoration: 'none' }}>
+          Profiles
+        </Link>
       </nav>
 
       <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '20px' }}>
