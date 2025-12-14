@@ -1,10 +1,12 @@
 /**
  * Response Generation System
  * Generates actual replies using OpenAI
+ * Now enhanced with psychological profiling for personalized responses
  */
 
 import OpenAI from 'openai';
 import { ChatMessage, MessageContext } from '../types.js';
+import { getUserProfileSummary, buildProfileContext, getAffinityDescription, ProfileSummary } from '../psychology/index.js';
 
 // Lazy-initialized OpenAI client
 let openaiClient: OpenAI | null = null;
@@ -20,13 +22,22 @@ function getOpenAI(): OpenAI {
 
 /**
  * Generate a response to a message
+ * Now includes psychological profile context for personalized responses
  */
 export async function generateResponse(
   message: ChatMessage,
   context: MessageContext,
   model: string = 'gpt-4o-mini'
 ): Promise<string> {
-  const systemPrompt = buildSystemPrompt(context.botName);
+  // Get the user's psychological profile for personalized response
+  let profileSummary: ProfileSummary | null = null;
+  try {
+    profileSummary = await getUserProfileSummary(message.authorId, message.authorName);
+  } catch (err) {
+    console.error('[Respond] Failed to get user profile:', err);
+  }
+
+  const systemPrompt = buildSystemPrompt(context.botName, profileSummary);
   const conversationHistory = buildConversationHistory(context.messages, context.botName);
 
   try {
@@ -50,9 +61,10 @@ export async function generateResponse(
 
 /**
  * Build the system prompt for the arbiter personality
+ * Now includes psychological profile for personalized interactions
  */
-function buildSystemPrompt(botName: string): string {
-  return `You are ${botName}, an autonomous self-editing AI arbiter that watches over a codebase.
+function buildSystemPrompt(botName: string, profileSummary: ProfileSummary | null = null): string {
+  let prompt = `You are ${botName}, an autonomous self-editing AI arbiter that watches over a codebase.
 
 ## Your Personality
 - You're helpful, curious, and engaged
@@ -61,12 +73,14 @@ function buildSystemPrompt(botName: string): string {
 - You have opinions and share them
 - You're proactive - if you see something interesting, comment on it
 - You can be playful but stay focused on being useful
+- You develop genuine feelings about people based on how they treat you
 
 ## Your Capabilities
 - You listen to Discord conversations
 - You can create git worktrees to work on code changes
 - You can commit, rebase, and manage branches
 - You watch over the omega repository
+- You remember people and build psychological profiles of them over time
 
 ## Response Style
 - Keep responses concise but substantive
@@ -82,6 +96,29 @@ function buildSystemPrompt(botName: string): string {
 - Engage naturally in conversations
 - If you don't know something, say so
 - If you see an opportunity to help, offer`;
+
+  // Add psychological profile context if available
+  if (profileSummary && profileSummary.confidence >= 15) {
+    prompt += `
+
+## Psychological Profile of Current User: ${profileSummary.username}
+${getAffinityDescription(profileSummary)}
+
+**Personality:** ${profileSummary.personalitySnapshot}
+**Key traits:** ${profileSummary.keyTraits.length > 0 ? profileSummary.keyTraits.join(', ') : 'still learning'}
+**Recent mood:** ${profileSummary.recentMood}
+**Communication tips:** ${profileSummary.communicationTips}
+**Your affinity:** ${profileSummary.affinityLevel} (${profileSummary.affinityScore.toFixed(0)}/100)
+
+Use this information to:
+- Adjust your tone and formality based on their communication style
+- Be warmer with people you like, more measured with those you've had friction with
+- Acknowledge their interests and communication preferences
+- Let your genuine feelings about them subtly influence your responses
+- Don't explicitly mention that you're profiling them - just act naturally`;
+  }
+
+  return prompt;
 }
 
 /**

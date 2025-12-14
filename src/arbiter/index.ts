@@ -27,6 +27,7 @@ import { getCoordinator, SessionCoordinator } from './coordinator.js';
 import type { PromptContext } from '../claude/index.js';
 import { DiscordTransport } from '../transports/discord.js';
 import { getLogStore } from '../logs/index.js';
+import { processMessageForProfiling, getUserProfileSummary, buildProfileContext } from '../psychology/index.js';
 
 /**
  * Events emitted by the arbiter
@@ -199,6 +200,17 @@ export class Arbiter extends EventEmitter {
     this.emit('message', message);
 
     try {
+      // Process psychological profiling for this message (non-blocking, runs in parallel)
+      // This builds/updates the user's psychological profile over time
+      processMessageForProfiling(message).then(({ profile, analysis, summary }) => {
+        console.log(`[Psychology] Updated profile for ${message.authorName}: affinity=${profile.affinity.overall.toFixed(1)}, confidence=${profile.confidence.toFixed(0)}%`);
+        if (analysis.observation) {
+          console.log(`[Psychology] Observation: ${analysis.observation.type} - ${analysis.observation.description}`);
+        }
+      }).catch(err => {
+        console.error('[Psychology] Profile update error:', err);
+      });
+
       // Check if there's an active session for this channel
       const existingSession = this.worktreeManager.findSessionByChannel(message.channelId);
 
@@ -410,6 +422,7 @@ export class Arbiter extends EventEmitter {
         userRequest: primaryMessage.content,
         channelName: primaryMessage.channelName || 'unknown',
         authorName: primaryMessage.authorName,
+        authorId: primaryMessage.authorId,  // For psychological profile lookup
         conversationHistory: context.messages,
         repoPath: session.worktreePath,
         branchName: session.branchName,

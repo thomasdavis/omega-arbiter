@@ -10,6 +10,7 @@ import { Arbiter } from './arbiter/index.js';
 import { DiscordTransport } from './transports/discord.js';
 import { ArbiterConfig } from './types.js';
 import { initializeDb, closeDb } from './db/index.js';
+import { initializePsychology } from './psychology/index.js';
 
 // Get directory of this file and load .env from project root
 const __filename = fileURLToPath(import.meta.url);
@@ -42,6 +43,10 @@ async function main(): Promise<void> {
   } else {
     console.log('[Main] PostgreSQL not configured, using in-memory logging only');
   }
+
+  // Initialize psychological profiling system
+  await initializePsychology();
+  console.log('[Main] Psychological profiling system initialized');
 
   // Build configuration
   const config: ArbiterConfig = {
