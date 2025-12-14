@@ -1,12 +1,14 @@
 /**
  * Prompt Builder for Claude Code CLI
  * Enhances user requests with AI and builds rich context
+ * Now includes psychological profile context for personalized interactions
  */
 
 import OpenAI from 'openai';
 import { ChatMessage } from '../types.js';
 import { readFile, readdir } from 'fs/promises';
 import { join } from 'path';
+import { getUserProfileSummary, buildProfileContext, getAffinityDescription } from '../psychology/index.js';
 
 // Lazy-initialized OpenAI client
 let openaiClient: OpenAI | null = null;
@@ -24,6 +26,7 @@ export interface PromptContext {
   userRequest: string;
   channelName: string;
   authorName: string;
+  authorId?: string;      // For psychological profile lookup
   conversationHistory: ChatMessage[];
   repoPath: string;
   branchName: string;
@@ -31,9 +34,10 @@ export interface PromptContext {
 
 /**
  * Build the complete prompt for Claude Code CLI
+ * Now includes psychological profile context for personalized task handling
  */
 export async function buildClaudePrompt(context: PromptContext): Promise<string> {
-  const { userRequest, channelName, authorName, conversationHistory, repoPath, branchName } = context;
+  const { userRequest, channelName, authorName, authorId, conversationHistory, repoPath, branchName } = context;
 
   // Get codebase context
   const codebaseContext = await getCodebaseContext(repoPath);
@@ -46,6 +50,31 @@ export async function buildClaudePrompt(context: PromptContext): Promise<string>
     .slice(-10)
     .map((msg) => `${msg.authorName}: ${msg.content.slice(0, 300)}`)
     .join('\n');
+
+  // Get psychological profile if authorId is available
+  let profileContext = '';
+  if (authorId) {
+    try {
+      const profileSummary = await getUserProfileSummary(authorId, authorName);
+      if (profileSummary && profileSummary.confidence >= 15) {
+        profileContext = `
+## Psychological Profile of Requester: ${profileSummary.username}
+${getAffinityDescription(profileSummary)}
+
+- **Personality:** ${profileSummary.personalitySnapshot}
+- **Key traits:** ${profileSummary.keyTraits.length > 0 ? profileSummary.keyTraits.join(', ') : 'still learning'}
+- **Communication style:** ${profileSummary.communicationTips}
+- **Your affinity:** ${profileSummary.affinityLevel} (${profileSummary.affinityScore.toFixed(0)}/100)
+
+Consider this profile when:
+- Deciding how thorough to be with documentation/comments
+- Choosing communication style for any output messages
+- Prioritizing aspects of the implementation they might care about`;
+      }
+    } catch (err) {
+      console.error('[PromptBuilder] Failed to get user profile:', err);
+    }
+  }
 
   // Build the full prompt
   const fullPrompt = `# Omega-Arbiter Self-Edit Task
@@ -63,6 +92,7 @@ ${userRequest}
 
 ## Enhanced Task Analysis
 ${enhancedRequest}
+${profileContext}
 
 ## Recent Conversation Context
 \`\`\`
