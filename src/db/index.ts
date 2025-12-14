@@ -314,6 +314,33 @@ export async function getLogCount(params: Omit<LogQueryParams, 'limit' | 'offset
 }
 
 /**
+ * Get all table names in the public schema
+ */
+export interface TableInfo {
+  table_name: string;
+  table_type: string;
+}
+
+export async function getTables(): Promise<TableInfo[]> {
+  if (!pool || !isInitialized) {
+    return [];
+  }
+
+  try {
+    const result = await pool.query<TableInfo>(
+      `SELECT table_name, table_type
+       FROM information_schema.tables
+       WHERE table_schema = 'public'
+       ORDER BY table_name`
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('[DB] Failed to query tables:', error);
+    return [];
+  }
+}
+
+/**
  * Close the database connection pool
  */
 export async function closeDb(): Promise<void> {
