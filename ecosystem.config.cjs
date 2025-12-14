@@ -24,6 +24,10 @@ module.exports = {
       restart_delay: 1000,
       env: {
         NODE_ENV: 'development',
+        POSTGRES_HOST: 'localhost',
+        POSTGRES_DB: 'omega_arbiter',
+        POSTGRES_USER: 'claudeuser',
+        POSTGRES_PASSWORD: 'omega123',
       },
     },
   ],

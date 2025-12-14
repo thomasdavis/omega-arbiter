@@ -144,8 +144,30 @@ Be concise and fix only what's broken. Do not add unnecessary features or refact
 
         cd "$PROJECT_DIR"
 
-        # Run Claude to fix the issues
-        log "Running Claude Code..."
+        # First try npm install - often fixes module issues
+        log "Running npm install to fix potential module issues..."
+        npm install 2>&1 | tee -a "$LOG_FILE" || true
+
+        # Try a simple restart first
+        log "Attempting simple restart..."
+        pm2 restart omega-arbiter omega-dashboard 2>&1 | tee -a "$LOG_FILE" || true
+        sleep 5
+
+        # Re-check if that fixed it
+        arbiter_status=$(check_service "omega-arbiter")
+        dashboard_status=$(check_service "omega-dashboard")
+        log "After restart - omega-arbiter: $arbiter_status, omega-dashboard: $dashboard_status"
+
+        if [ "$arbiter_status" = "healthy" ] || [ "$arbiter_status" = "errors" ]; then
+            if [ "$dashboard_status" = "healthy" ] || [ "$dashboard_status" = "errors" ]; then
+                log "Simple restart fixed the issue!"
+                rm -f "$LOCK_FILE"
+                exit 0
+            fi
+        fi
+
+        # Still broken, run Claude to fix the issues
+        log "Simple restart didn't help, running Claude Code..."
         if claude -p "$prompt" --verbose --output-format stream-json --permission-mode acceptEdits 2>&1 | tee -a "$LOG_FILE"; then
             log "Claude completed successfully"
 

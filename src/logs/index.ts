@@ -1,9 +1,16 @@
 /**
  * Log Store for Omega Arbiter
- * In-memory log storage with PostgreSQL persistence support
+ * In-memory log storage with file persistence for dashboard access
  */
 
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import { insertLog, isDbAvailable, queryLogs, type DbLogEntry } from '../db/index.js';
+
+// Get the logs file path
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const LOGS_FILE = join(__dirname, '../../logs/bot-logs.json');
 
 export interface LogEntry {
   timestamp: string;
@@ -23,9 +30,52 @@ export class LogStore {
   private logs: LogEntry[] = [];
   private maxLogs: number;
   private currentContext: LogContext = {};
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private dirty = false;
 
   constructor(maxLogs = 10000) {
     this.maxLogs = maxLogs;
+    this.loadFromFile();
+
+    // Save to file periodically (every 5 seconds if dirty)
+    setInterval(() => {
+      if (this.dirty) {
+        this.saveToFile();
+      }
+    }, 5000);
+  }
+
+  /**
+   * Load logs from file on startup
+   */
+  private loadFromFile(): void {
+    try {
+      if (existsSync(LOGS_FILE)) {
+        const data = readFileSync(LOGS_FILE, 'utf-8');
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed)) {
+          this.logs = parsed.slice(-this.maxLogs);
+        }
+      }
+    } catch {
+      // Ignore errors, start fresh
+    }
+  }
+
+  /**
+   * Save logs to file for dashboard access
+   */
+  private saveToFile(): void {
+    try {
+      const dir = dirname(LOGS_FILE);
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+      writeFileSync(LOGS_FILE, JSON.stringify(this.logs.slice(-1000), null, 2));
+      this.dirty = false;
+    } catch {
+      // Ignore file errors
+    }
   }
 
   /**
@@ -52,6 +102,7 @@ export class LogStore {
     };
 
     this.logs.push(entry);
+    this.dirty = true;
 
     // Trim old logs if we exceed the limit
     if (this.logs.length > this.maxLogs) {
